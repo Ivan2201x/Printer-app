@@ -1,0 +1,32 @@
+# Secretos — nunca subir
+.env
+**/.env
+*.pem
+*.key
+
+# Python
+venv/
+__pycache__/
+*.py[cod]
+*.egg-info/
+.pytest_cache/
+.mypy_cache/
+
+# Build local (los releases/ versionados van aparte)
+build/
+*.spec.bak
+
+# Runtime local
+logs/*.log
+config.json
+temp/*
+!temp/.gitkeep
+
+# IDE
+.idea/
+.vscode/
+*.swp
+
+# OS
+Thumbs.db
+Desktop.ini

@@ -1,0 +1,9 @@
+[Desktop Entry]
+Type=Application
+Name=Gestor de Impresión y Escaneo
+Comment=Impresoras CUPS y escáneres SANE (local)
+Exec=@APP_ROOT@/install/linux/run.sh
+Path=@APP_ROOT@
+Terminal=false
+Categories=Office;Utility;
+StartupNotify=true

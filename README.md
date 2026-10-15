@@ -14,6 +14,15 @@ Aplicación de escritorio **100 % local** para administrar impresoras, imprimir,
 
 Sin red, bases de datos ni servidores HTTP.
 
+## Descarga rápida (sin clonar)
+
+| Plataforma | Archivo |
+|------------|---------|
+| **Windows** | [`releases/GestorImpresionEscaneo.exe`](releases/GestorImpresionEscaneo.exe) (~20 MB) |
+| **Linux** | [`releases/printer-app-linux.tar.gz`](releases/printer-app-linux.tar.gz) — descomprimir y ejecutar `install/linux/install.sh` |
+
+En GitHub: pestaña **Code** → carpeta `releases/`, o **Download raw file** en cada enlace.
+
 ---
 
 ## Logo e icono

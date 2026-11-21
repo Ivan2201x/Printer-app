@@ -1,0 +1,26 @@
+<!DOCTYPE html>
+<html lang="es">
+<head>
+  <meta charset="utf-8"/>
+  <title>Política monitoreo</title>
+</head>
+<body>
+  <p><a href="/admin/dashboard">← Volver</a></p>
+  <h1>Control de monitoreo</h1>
+  <p>Desactivar detiene nuevos registros en clientes (consulta periódica de política).</p>
+  <form method="post" action="/admin/policy">
+    <label>
+      <input type="checkbox" name="monitoring_enabled" value="1" {% if monitoring_enabled %}checked{% endif %}/>
+      Monitoreo habilitado
+    </label>
+    <br/><br/>
+    <button type="submit">Guardar</button>
+  </form>
+  {% if can_purge %}
+  <hr/>
+  <form method="post" action="/admin/purge" onsubmit="return confirm('¿Eliminar datos antiguos según retención?');">
+    <button type="submit">Ejecutar purga por retención ahora</button>
+  </form>
+  {% endif %}
+</body>
+</html>

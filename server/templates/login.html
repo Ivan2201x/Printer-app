@@ -1,0 +1,25 @@
+<!DOCTYPE html>
+<html lang="es">
+<head>
+  <meta charset="utf-8"/>
+  <title>Admin — Actividad</title>
+  <style>
+    body { font-family: system-ui, sans-serif; max-width: 420px; margin: 4rem auto; padding: 0 1rem; }
+    input { width: 100%; padding: 0.5rem; margin: 0.25rem 0 1rem; }
+    button { padding: 0.5rem 1rem; }
+    .err { color: #b91c1c; }
+  </style>
+</head>
+<body>
+  <h1>Panel administrativo</h1>
+  <p>Acceso RBAC — métricas de actividad in-app</p>
+  {% if error %}<p class="err">{{ error }}</p>{% endif %}
+  <form method="post" action="/admin/login">
+    <label>Correo corporativo</label>
+    <input name="email" type="email" required/>
+    <label>Contraseña</label>
+    <input name="password" type="password" required/>
+    <button type="submit">Entrar</button>
+  </form>
+</body>
+</html>

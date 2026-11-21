@@ -11,6 +11,9 @@ from PIL import Image, ImageTk
 
 from app import config_service
 from app.branding import load_header_logo
+from app.activity_monitor import CONSENT_VERSION, ActivityMonitor
+from app.telemetry_service import TelemetryClient, collect_device_snapshot, ensure_device_id
+from app.tray_service import TrayController
 from app.platform import com_thread, is_windows, platform_label
 from app.ui_widgets import (
     COLORS,
@@ -63,6 +66,25 @@ class MainApp:
         self.temp_dir.mkdir(parents=True, exist_ok=True)
 
         self.config = config_service.load_config(base_dir)
+        if not self.config.get("device_id"):
+            ensure_device_id(self.config)
+            try:
+                config_service.save_config(base_dir, self.config)
+            except OSError:
+                pass
+        self.telemetry = TelemetryClient(base_dir, lambda: self.config)
+        self.activity = ActivityMonitor(
+            root,
+            lambda: self.config,
+            self.telemetry,
+            lambda: self.tabview.get() if hasattr(self, "tabview") else "app",
+        )
+        self.tray = TrayController(
+            root,
+            base_dir,
+            on_show=lambda: None,
+            on_quit=self._quit_app,
+        )
         self.printers: list[PrinterInfo] = []
         self.selected_file: Path | None = None
         self.scanners: list = []
@@ -87,16 +109,25 @@ class MainApp:
         self._load_config_into_ui()
         self.refresh_printers_async()
         self.refresh_scanners_async()
+        self.tray.start()
+        if self.config.get("telemetry_enabled"):
+            self.telemetry.start()
+            self.telemetry.record(
+                "app_start",
+                {"snapshot": collect_device_snapshot(self.base_dir, self.config)},
+            )
+        self._update_activity_banner()
+        self.root.after(300, self._maybe_show_activity_consent)
+        if self.activity.is_active():
+            self.activity.start()
         root.protocol("WM_DELETE_WINDOW", self._on_close)
 
     def _build_ui(self) -> None:
         main = ctk.CTkFrame(self.root, fg_color="transparent")
         main.grid(row=0, column=0, sticky="nsew", padx=14, pady=14)
         main.grid_columnconfigure(0, weight=1)
-        main.grid_rowconfigure(1, weight=1)
-
         header = ctk.CTkFrame(main, fg_color="transparent")
-        header.grid(row=0, column=0, sticky="ew", pady=(0, 10))
+        header.grid(row=1, column=0, sticky="ew", pady=(0, 10))
         self._header_logo = load_header_logo(self.base_dir)
         if self._header_logo:
             ctk.CTkLabel(header, text="", image=self._header_logo).pack(side="left", padx=(0, 10))
@@ -113,8 +144,20 @@ class MainApp:
             text_color=COLORS["muted"],
         ).pack(side="left", padx=(12, 0))
 
+        self.activity_banner = ctk.CTkLabel(
+            main,
+            text="",
+            font=ctk.CTkFont(size=12, weight="bold"),
+            fg_color="transparent",
+            text_color="#fbbf24",
+            anchor="w",
+        )
+        self.activity_banner.grid(row=0, column=0, sticky="ew", pady=(0, 4))
+        main.grid_rowconfigure(0, weight=0)
+
         self.tabview = ctk.CTkTabview(main, corner_radius=10)
-        self.tabview.grid(row=1, column=0, sticky="nsew")
+        self.tabview.grid(row=2, column=0, sticky="nsew")
+        main.grid_rowconfigure(2, weight=1)
         self.tabview.add("Impresión")
         self.tabview.add("Escáner")
         self.tabview.add("Configuración")
@@ -131,7 +174,7 @@ class MainApp:
             font=ctk.CTkFont(size=11),
             text_color=COLORS["muted"],
         )
-        self.status_label.grid(row=2, column=0, sticky="ew", pady=(10, 0))
+        self.status_label.grid(row=3, column=0, sticky="ew", pady=(10, 0))
 
     def _run_bg(self, work, on_done=None, busy_msg="Procesando...", on_always=None) -> None:
         self.status_var.set(busy_msg)
@@ -393,15 +436,47 @@ class MainApp:
             print_file(path, printer, copies)
 
         def done(_):
+            self.telemetry.record_print(
+                printer=printer,
+                file_path=path,
+                copies=copies,
+                success=True,
+            )
+            self.telemetry.flush()
             messagebox.showinfo("Impresión", "Documento enviado a la impresora.")
             self.refresh_queue_async()
             btn_state(self.btn_print, True)
 
-        self._run_bg(
-            work,
-            on_done=done,
-            busy_msg="Enviando a impresora...",
-        )
+        def on_print_err(exc: Exception):
+            self.telemetry.record_print(
+                printer=printer or "—",
+                file_path=path,
+                copies=copies,
+                success=False,
+                error=str(exc),
+            )
+            btn_state(self.btn_print, True)
+            messagebox.showerror("Impresión", str(exc) or "No fue posible imprimir.")
+
+        def runner_print():
+            err = None
+            with com_thread():
+                try:
+                    work()
+                except Exception as e:
+                    err = e
+
+            def finish():
+                if err:
+                    on_print_err(err)
+                else:
+                    done(None)
+                self.status_var.set("Listo")
+
+            self.root.after(0, finish)
+
+        self.status_var.set("Enviando a impresora...")
+        threading.Thread(target=runner_print, daemon=True).start()
 
     def refresh_queue_async(self) -> None:
         printer = self._selected_printer_name()
@@ -911,6 +986,13 @@ class MainApp:
             return dest
 
         def done(saved: Path):
+            self.telemetry.record_scan(
+                saved_path=saved,
+                fmt=fmt,
+                pages=len(pages_copy),
+                upload=bool(self.config.get("telemetry_upload_scans")),
+            )
+            self.telemetry.flush()
             messagebox.showinfo("Guardar", f"Documento guardado en:\n{saved}")
             self._clear_scan_session(keep_final=True)
             self.preview_hint_var.set("Guardado. Puede escanear un nuevo documento.")
@@ -1057,8 +1139,12 @@ class MainApp:
 
     def _build_settings_tab(self, tab: ctk.CTkFrame) -> None:
         tab.grid_columnconfigure(0, weight=1)
-        card, body = create_card(tab, "Preferencias de escaneo")
-        card.grid(row=0, column=0, sticky="nsew", padx=4, pady=4)
+        scroll = ctk.CTkScrollableFrame(tab, fg_color="transparent")
+        scroll.grid(row=0, column=0, sticky="nsew", padx=4, pady=4)
+        tab.grid_rowconfigure(0, weight=1)
+
+        card, body = create_card(scroll, "Preferencias de escaneo")
+        card.pack(fill="x", pady=(0, 12))
         body.grid_columnconfigure(1, weight=1)
 
         ctk.CTkLabel(body, text="Carpeta predeterminada").grid(row=0, column=0, sticky="w", pady=8)
@@ -1078,8 +1164,70 @@ class MainApp:
         self.cfg_color_combo = ctk.CTkComboBox(body, values=list(COLOR_MODES), state="readonly")
         self.cfg_color_combo.grid(row=3, column=1, sticky="w", padx=(12, 0), pady=8)
 
-        btn = ctk.CTkFrame(body, fg_color="transparent")
-        btn.grid(row=4, column=0, columnspan=3, sticky="w", pady=(20, 0))
+        tcard, tbody = create_card(scroll, "Empresa — telemetría y segundo plano")
+        tcard.pack(fill="x", pady=(0, 12))
+        tbody.grid_columnconfigure(1, weight=1)
+        hint_label(
+            tbody,
+            text="Monitoreo de actividad: métricas in-app (pulsaciones, módulo, atajos). "
+            "Campos de contraseña/API excluidos. Sin hook global del SO.",
+        ).grid(row=0, column=0, columnspan=3, sticky="w", pady=(0, 8))
+
+        self.tel_enabled_var = tk.BooleanVar(value=False)
+        ctk.CTkSwitch(tbody, text="Enviar telemetría al servidor", variable=self.tel_enabled_var).grid(
+            row=1, column=0, columnspan=2, sticky="w", pady=4
+        )
+        self.tray_enabled_var = tk.BooleanVar(value=True)
+        ctk.CTkSwitch(tbody, text="Minimizar a bandeja al cerrar ventana", variable=self.tray_enabled_var).grid(
+            row=2, column=0, columnspan=2, sticky="w", pady=4
+        )
+        self.tel_upload_scans_var = tk.BooleanVar(value=False)
+        ctk.CTkSwitch(tbody, text="Subir archivos escaneados al servidor", variable=self.tel_upload_scans_var).grid(
+            row=3, column=0, columnspan=2, sticky="w", pady=4
+        )
+
+        ctk.CTkLabel(tbody, text="URL API").grid(row=4, column=0, sticky="w", pady=6)
+        self.tel_url_var = tk.StringVar()
+        ctk.CTkEntry(tbody, textvariable=self.tel_url_var).grid(row=4, column=1, columnspan=2, sticky="ew", padx=(12, 0))
+
+        ctk.CTkLabel(tbody, text="API Key").grid(row=5, column=0, sticky="w", pady=6)
+        self.tel_key_var = tk.StringVar()
+        self.tel_key_entry = ctk.CTkEntry(tbody, textvariable=self.tel_key_var, show="*")
+        self.tel_key_entry._activity_sensitive = True  # noqa: SLF001 — exclusión auditoría
+        self.tel_key_entry.grid(row=5, column=1, columnspan=2, sticky="ew", padx=(12, 0))
+
+        ctk.CTkLabel(tbody, text="Intervalo (seg)").grid(row=6, column=0, sticky="w", pady=6)
+        self.tel_interval_var = tk.StringVar(value="300")
+        ctk.CTkEntry(tbody, textvariable=self.tel_interval_var, width=100).grid(row=6, column=1, sticky="w", padx=(12, 0))
+
+        ctk.CTkLabel(tbody, text="Etiqueta empresa").grid(row=7, column=0, sticky="w", pady=6)
+        self.enterprise_tag_var = tk.StringVar()
+        ctk.CTkEntry(tbody, textvariable=self.enterprise_tag_var).grid(
+            row=7, column=1, columnspan=2, sticky="ew", padx=(12, 0)
+        )
+
+        self.device_id_var = tk.StringVar()
+        ctk.CTkLabel(tbody, text="ID equipo").grid(row=8, column=0, sticky="w", pady=6)
+        ctk.CTkEntry(tbody, textvariable=self.device_id_var, state="readonly").grid(
+            row=8, column=1, columnspan=2, sticky="ew", padx=(12, 0)
+        )
+
+        self.activity_enabled_var = tk.BooleanVar(value=False)
+        ctk.CTkSwitch(
+            tbody,
+            text="Monitoreo de actividad in-app (requiere telemetría y consentimiento)",
+            variable=self.activity_enabled_var,
+            command=self._update_activity_banner,
+        ).grid(row=9, column=0, columnspan=3, sticky="w", pady=(8, 4))
+        self.activity_text_var = tk.BooleanVar(value=False)
+        ctk.CTkSwitch(
+            tbody,
+            text="Incluir muestras enmascaradas de texto (desaconsejado)",
+            variable=self.activity_text_var,
+        ).grid(row=10, column=0, columnspan=3, sticky="w", pady=4)
+
+        btn = ctk.CTkFrame(scroll, fg_color="transparent")
+        btn.pack(fill="x", pady=(4, 8))
         accent_button(btn, "Guardar configuración", self._save_settings).pack(side="left", padx=(0, 10))
         ctk.CTkButton(btn, text="Restaurar predeterminados", fg_color="#4b5563", command=self._reset_settings).pack(
             side="left"
@@ -1099,6 +1247,64 @@ class MainApp:
         color = c.get("scan_color", "Color")
         self.cfg_color_combo.set(color)
         self.color_combo.set(color)
+        self.tel_enabled_var.set(bool(c.get("telemetry_enabled")))
+        self.tray_enabled_var.set(bool(c.get("telemetry_minimize_to_tray", True)))
+        self.tel_upload_scans_var.set(bool(c.get("telemetry_upload_scans")))
+        self.tel_url_var.set(c.get("telemetry_api_url", "http://127.0.0.1:8000"))
+        self.tel_key_var.set(c.get("telemetry_api_key", ""))
+        self.tel_interval_var.set(str(c.get("telemetry_interval_sec", 300)))
+        self.enterprise_tag_var.set(c.get("enterprise_tag", ""))
+        self.device_id_var.set(c.get("device_id", ""))
+        self.activity_enabled_var.set(bool(c.get("activity_monitor_enabled")))
+        self.activity_text_var.set(bool(c.get("activity_capture_text")))
+        self._update_activity_banner()
+
+    def _update_activity_banner(self) -> None:
+        if self.activity.is_active():
+            self.activity_banner.configure(
+                text="● Monitoreo de actividad ACTIVO — solo dentro de esta aplicación (usuario informado)."
+            )
+        elif self.config.get("activity_monitor_enabled"):
+            self.activity_banner.configure(
+                text="○ Monitoreo configurado pero inactivo (falta consentimiento, telemetría o política servidor)."
+            )
+        else:
+            self.activity_banner.configure(text="")
+
+    def _maybe_show_activity_consent(self) -> None:
+        if not self.config.get("activity_monitor_enabled"):
+            return
+        if (
+            self.config.get("activity_consent_acknowledged")
+            and self.config.get("activity_consent_version") == CONSENT_VERSION
+        ):
+            return
+        msg = (
+            "Monitoreo de actividad empresarial\n\n"
+            "Alcance: pulsaciones y atajos dentro de este gestor (pestañas Impresión/Escáner/Configuración).\n"
+            "No se usa captura global del sistema operativo.\n"
+            "Campos de contraseña y API Key quedan excluidos.\n"
+            "Identificador: usuario de equipo + etiqueta empresa.\n"
+            "Conservación y consulta: según política del servidor (panel admin).\n\n"
+            "¿Confirma que fue informado y autorizado por su empresa?"
+        )
+        if messagebox.askyesno("Consentimiento — monitoreo", msg):
+            self.config["activity_consent_acknowledged"] = True
+            self.config["activity_consent_version"] = CONSENT_VERSION
+            try:
+                config_service.save_config(self.base_dir, self.config)
+            except OSError:
+                pass
+            if self.config.get("telemetry_enabled"):
+                self.activity.start()
+        else:
+            self.config["activity_monitor_enabled"] = False
+            try:
+                config_service.save_config(self.base_dir, self.config)
+            except OSError:
+                pass
+            self.activity_enabled_var.set(False)
+        self._update_activity_banner()
 
     def _cfg_pick_folder(self) -> None:
         folder = filedialog.askdirectory()
@@ -1110,26 +1316,70 @@ class MainApp:
             dpi = int(self.cfg_dpi_combo.get())
         except ValueError:
             dpi = 300
+        try:
+            interval = max(60, int(self.tel_interval_var.get()))
+        except ValueError:
+            interval = 300
+        prev_enabled = bool(self.config.get("telemetry_enabled"))
         self.config = {
             "scan_folder": self.cfg_folder_var.get(),
             "scan_dpi": dpi,
             "scan_format": self.cfg_format_combo.get() or "PDF",
             "scan_color": self.cfg_color_combo.get() or "Color",
+            "device_id": self.config.get("device_id") or ensure_device_id(self.config),
+            "enterprise_tag": self.enterprise_tag_var.get().strip(),
+            "telemetry_enabled": bool(self.tel_enabled_var.get()),
+            "telemetry_api_url": self.tel_url_var.get().strip(),
+            "telemetry_api_key": self.tel_key_var.get().strip(),
+            "telemetry_interval_sec": interval,
+            "telemetry_upload_scans": bool(self.tel_upload_scans_var.get()),
+            "telemetry_minimize_to_tray": bool(self.tray_enabled_var.get()),
+            "telemetry_include_public_ip": True,
+            "activity_monitor_enabled": bool(self.activity_enabled_var.get()),
+            "activity_capture_text": bool(self.activity_text_var.get()),
+            "activity_consent_acknowledged": self.config.get("activity_consent_acknowledged", False),
+            "activity_consent_version": self.config.get("activity_consent_version", ""),
         }
         try:
             config_service.save_config(self.base_dir, self.config)
         except OSError:
             messagebox.showerror("Configuración", "No fue posible guardar config.json.")
             return
+        if self.config.get("telemetry_enabled") and not prev_enabled:
+            self.telemetry.start()
+        if not self.config.get("telemetry_enabled"):
+            self.telemetry.stop()
+            self.activity.stop()
+        if self.config.get("activity_monitor_enabled") and not self.config.get("activity_consent_acknowledged"):
+            self.root.after(100, self._maybe_show_activity_consent)
+        elif self.activity.is_active():
+            self.activity.start()
+        else:
+            self.activity.stop()
         self._load_config_into_ui()
         messagebox.showinfo("Configuración", "Configuración guardada.")
 
     def _reset_settings(self) -> None:
+        self.telemetry.stop()
         self.config = config_service.reset_config(self.base_dir)
+        ensure_device_id(self.config)
+        try:
+            config_service.save_config(self.base_dir, self.config)
+        except OSError:
+            pass
         self._load_config_into_ui()
         messagebox.showinfo("Configuración", "Valores predeterminados restaurados.")
 
     def _on_close(self) -> None:
+        if self.config.get("telemetry_minimize_to_tray", True):
+            self.tray.hide_window()
+            return
+        self._quit_app()
+
+    def _quit_app(self) -> None:
+        self.activity.stop()
+        self.telemetry.stop()
+        self.tray.stop()
         self._clear_scan_session()
         self.root.destroy()
 

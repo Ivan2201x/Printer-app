@@ -12,7 +12,7 @@ Aplicación de escritorio **100 % local** para administrar impresoras, imprimir,
 - Windows: **pywin32** (solo en Windows, vía `requirements.txt`)  
 - Empaquetado Windows: **PyInstaller**
 
-Sin red, bases de datos ni servidores HTTP.
+Por defecto **no usa red**. Opcionalmente, modo **empresa**: telemetría JSON hacia un servidor FastAPI propio (historial de impresión/escaneo, rutas, IP, metadata del equipo). Ver [`server/README.md`](server/README.md). **No** se capturan contraseñas de Windows ni de otras aplicaciones.
 
 ## Descarga rápida (sin clonar)
 

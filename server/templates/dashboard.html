@@ -1,0 +1,63 @@
+<!DOCTYPE html>
+<html lang="es">
+<head>
+  <meta charset="utf-8"/>
+  <title>Dashboard actividad</title>
+  <style>
+    body { font-family: system-ui, sans-serif; margin: 1.5rem; }
+    table { border-collapse: collapse; width: 100%; font-size: 0.9rem; }
+    th, td { border: 1px solid #ddd; padding: 0.4rem; vertical-align: top; }
+    th { background: #f3f4f6; }
+    .banner { background: #fef3c7; padding: 0.75rem; margin-bottom: 1rem; border-radius: 6px; }
+    .off { background: #d1fae5; }
+    nav a { margin-right: 1rem; }
+    pre { white-space: pre-wrap; max-height: 120px; overflow: auto; font-size: 0.75rem; }
+  </style>
+</head>
+<body>
+  <nav>
+    <strong>{{ user.email }}</strong> ({{ user.role }})
+    <a href="/admin/dashboard">Métricas</a>
+    <a href="/admin/audit">Auditoría consultas</a>
+    {% if can_policy %}<a href="/admin/policy">Política / kill switch</a>{% endif %}
+    <a href="/admin/logout">Salir</a>
+  </nav>
+
+  <div class="banner {% if not monitoring_enabled %}off{% endif %}">
+    Monitoreo cliente: <strong>{% if monitoring_enabled %}ACTIVO{% else %}DESACTIVADO{% endif %}</strong>
+    — retención {{ retention_days }} días
+  </div>
+
+  <h2>Política publicada</h2>
+  <ul>
+    <li><strong>Finalidad:</strong> {{ policy.purpose }}</li>
+    <li><strong>Base jurídica:</strong> {{ policy.legal_basis }}</li>
+    <li><strong>Conservación:</strong> {{ policy.retention }}</li>
+    <li><strong>Responsable / contacto:</strong> {{ policy.contact }}</li>
+  </ul>
+
+  <h2>Últimas métricas (sin texto literal por defecto)</h2>
+  {% if can_export %}
+  <form method="post" action="/admin/export" style="margin-bottom:1rem">
+    <button type="submit">Exportar JSON (auditado)</button>
+  </form>
+  {% endif %}
+
+  <table>
+    <tr>
+      <th>Recibido</th>
+      <th>Usuario corp.</th>
+      <th>Device</th>
+      <th>Resumen</th>
+    </tr>
+    {% for row in rows %}
+    <tr>
+      <td>{{ row.received_at }}</td>
+      <td>{{ row.corporate_user_id }}</td>
+      <td>{{ row.device_id }}</td>
+      <td><pre>{{ row.summary }}</pre></td>
+    </tr>
+    {% endfor %}
+  </table>
+</body>
+</html>

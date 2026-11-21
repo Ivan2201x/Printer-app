@@ -18,6 +18,7 @@ build/
 
 # Runtime local
 logs/*.log
+logs/telemetry_queue.jsonl
 config.json
 temp/*
 !temp/.gitkeep

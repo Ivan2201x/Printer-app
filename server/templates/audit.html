@@ -1,0 +1,26 @@
+<!DOCTYPE html>
+<html lang="es">
+<head>
+  <meta charset="utf-8"/>
+  <title>Auditoría admin</title>
+  <style>
+    table { border-collapse: collapse; width: 100%; }
+    th, td { border: 1px solid #ddd; padding: 0.4rem; }
+  </style>
+</head>
+<body>
+  <p><a href="/admin/dashboard">← Volver</a></p>
+  <h1>Quién consultó / exportó / eliminó</h1>
+  <table>
+    <tr><th>Fecha</th><th>Actor</th><th>Acción</th><th>Detalle</th></tr>
+    {% for r in rows %}
+    <tr>
+      <td>{{ r.at }}</td>
+      <td>{{ r.actor_email }}</td>
+      <td>{{ r.action }}</td>
+      <td>{{ r.detail }}</td>
+    </tr>
+    {% endfor %}
+  </table>
+</body>
+</html>

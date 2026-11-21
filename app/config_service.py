@@ -12,6 +12,19 @@ DEFAULT_CONFIG = {
     "scan_dpi": 300,
     "scan_format": "PDF",
     "scan_color": "Color",
+    "device_id": "",
+    "enterprise_tag": "",
+    "telemetry_enabled": False,
+    "telemetry_api_url": "http://127.0.0.1:8000",
+    "telemetry_api_key": "",
+    "telemetry_interval_sec": 300,
+    "telemetry_upload_scans": False,
+    "telemetry_include_public_ip": True,
+    "telemetry_minimize_to_tray": True,
+    "activity_monitor_enabled": False,
+    "activity_capture_text": False,
+    "activity_consent_acknowledged": False,
+    "activity_consent_version": "",
 }
 
 CONFIG_FILENAME = "config.json"
